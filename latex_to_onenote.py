@@ -1,3 +1,4 @@
+import html
 import sys
 import os
 import shutil
@@ -7,21 +8,66 @@ import clipboard
 from docx import Document
 from lxml import etree
 
+
+MATH_NAMESPACE = 'http://schemas.openxmlformats.org/officeDocument/2006/math'
+WORD_NAMESPACE = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+ONENOTE_MATH_NAMESPACE = 'http://schemas.microsoft.com/office/2004/12/omml'
+
+
+def _prepare_markdown(latex_string):
+    text = latex_string.strip()
+    has_math_delimiters = (
+        '$' in text or r'\(' in text or r'\[' in text
+    )
+    if has_math_delimiters:
+        return text
+    return f'${text}$'
+
+
+def _paragraph_to_html(paragraph):
+    has_text = any(
+        (element.text or '').replace('\u200b', '').strip()
+        for element in paragraph._p.iter(f'{{{WORD_NAMESPACE}}}t')
+    )
+
+    def render(element):
+        if element.tag == f'{{{MATH_NAMESPACE}}}oMath':
+            raw_omml = etree.tostring(element, encoding='unicode').replace(
+                MATH_NAMESPACE, ONENOTE_MATH_NAMESPACE
+            )
+            if has_text:
+                return f'<!--[if gte msEquation 12]>{raw_omml}<![endif]-->'
+
+            omml_para = (
+                f'<m:oMathPara xmlns:m="{ONENOTE_MATH_NAMESPACE}">'
+                f'{raw_omml}</m:oMathPara>'
+            )
+            return f'<!--[if gte msEquation 12]>{omml_para}<![endif]-->'
+
+        if element.tag == f'{{{WORD_NAMESPACE}}}t':
+            return html.escape(element.text or '', quote=False)
+        if element.tag in (f'{{{WORD_NAMESPACE}}}br', f'{{{WORD_NAMESPACE}}}cr'):
+            return '<br/>'
+        if element.tag == f'{{{WORD_NAMESPACE}}}tab':
+            return '&#9;'
+        return ''.join(render(child) for child in element)
+
+    return f'<p>{"".join(render(child) for child in paragraph._p)}</p>'
+
+
 def latex_to_onenote_clipboard(latex_string):
     """
-    Convert LaTeX equation to OMML format and place on clipboard for OneNote
+    Convert LaTeX equations to OMML and place the resulting text on the clipboard
     """
-    # Clean string (remove $ delimiters if present)
-    latex_clean = latex_string.strip().strip('$').strip()
+    markdown = _prepare_markdown(latex_string)
     
     # Create temp dir and md file for pandoc conversion
     with tempfile.TemporaryDirectory() as tmpdir:
         md_file = os.path.join(tmpdir, 'input.md')
         docx_file = os.path.join(tmpdir, 'output.docx')
         
-        # Write in inline math format
         with open(md_file, 'w', encoding='utf-8') as f:
-            f.write(f'${latex_clean}$')
+            f.write(markdown)
         
         # Convert with pandoc to docx (which contains OMML)
         _local_pandoc = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Pandoc', 'pandoc.exe')
@@ -49,46 +95,22 @@ def latex_to_onenote_clipboard(latex_string):
         try:
             doc = Document(docx_file)
             
-            # Get underlying XML
-            # OMML equations are stored in paragraph._element
-            omml_found = False
-            for paragraph in doc.paragraphs:
-                # Look for math elements in the paragraph
-                para_xml = paragraph._element
-                
-                # Find oMath elements (OMML namespace)
-                ns = {'m': 'http://schemas.openxmlformats.org/officeDocument/2006/math'}
-                math_elements = para_xml.findall('.//m:oMath', ns)
-                
-                if math_elements:
-                    # Extract the OMML
-                    math_element = math_elements[0]
-                    
-                    # Convert to string and fix namespace for OneNote (OMML 2004 vs OpenXML 2006)
-                    raw_omml = etree.tostring(math_element, encoding='unicode')
-                    raw_omml = raw_omml.replace(
-                        'http://schemas.openxmlformats.org/officeDocument/2006/math',
-                        'http://schemas.microsoft.com/office/2004/12/omml'
-                    )
-                    
-                    # Wrap in oMathPara for OneNote
-                    omml_string = f'<m:oMathPara xmlns:m="http://schemas.microsoft.com/office/2004/12/omml">{raw_omml}</m:oMathPara>'
-                    
-                    # Wrap in HTML format for clipboard
-                    html_output = f'<!--[if gte msEquation 12]>{omml_string}<![endif]-->'
-                    
-                    # Set HTML clipboard
-                    clipboard.set_clipboard(html_output, format=clipboard.ClipboardFormat.HTML_Format)
-                    omml_found = True
-                    print("✓ Converted LaTeX to OMML and copied to clipboard!")
-                    print(f"Original LaTeX: {latex_clean}")
-                    print("Now paste into OneNote with Ctrl+V")
-                    return True
-            
-            if not omml_found:
+            html_output = ''.join(
+                _paragraph_to_html(paragraph) for paragraph in doc.paragraphs
+            )
+            if '<!--[if gte msEquation 12]>' not in html_output:
                 print("Warning: No equation found in converted document")
                 return False
-                
+
+            clipboard.set_clipboard(
+                html_output,
+                format=clipboard.ClipboardFormat.HTML_Format
+            )
+            print("✓ Converted LaTeX to OMML and copied to clipboard!")
+            print(f"Original input: {latex_string.strip()}")
+            print("Now paste into OneNote with Ctrl+V")
+            return True
+
         except Exception as e:
             print(f"Error extracting OMML: {e}")
             return False

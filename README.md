@@ -1,6 +1,7 @@
 # LaTeX-to-OneNote
 
-Simple Python script to convert LaTeX equations into OneNote pastable math objects.
+Simple Python script to convert LaTeX equations into OneNote pastable math objects,
+including equations embedded in surrounding text.
 
 OneNote doesn't natively support typing or pasting raw LaTeX (or at least not well), and its built-in equation editor is annoying and slow. This script takes your raw LaTeX, converts it to Office Math ML (OMML) using Pandoc, and puts it on your clipboard ready to paste. 
 Basic Architecture: Clipboard/Input (LaTeX) -> Pandoc -> Word Doc (OMML) -> Extract XML -> Reformat -> Clipboard (HTML+OMML)
@@ -17,7 +18,9 @@ Basic Architecture: Clipboard/Input (LaTeX) -> Pandoc -> Word Doc (OMML) -> Extr
 ## Usage
 
 **Method 1: Clipboard**
-1.  Copy any LaTeX to your clipboard (e.g., `V_{rms}=\frac{V_{peak}}{\sqrt{2}}`).
+1.  Copy LaTeX to your clipboard. A single formula can be copied by itself
+    (e.g., `V_{rms}=\frac{V_{peak}}{\sqrt{2}}`) or included in text with math
+    delimiters (e.g., `The result is $x^2 + 1$.`).
 2.  Run the script:
     ```bash
     python latex_to_onenote.py
@@ -26,7 +29,7 @@ Basic Architecture: Clipboard/Input (LaTeX) -> Pandoc -> Word Doc (OMML) -> Extr
 
 **Method 2: Command Line**
 ```bash
-python latex_to_onenote.py "E=mc^2"
+python latex_to_onenote.py "The result is $x^2 + 1$."
 ```
 
 **Method 3: Auto Hotkey Script (Recommended)**
